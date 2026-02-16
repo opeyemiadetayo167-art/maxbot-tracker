@@ -1,154 +1,162 @@
 import streamlit as st
-from datetime import datetime
-from supabase_client import supabase
+from datetime import datetime, date, timedelta
+from database import get_connection
+import random
 
-# Page configuration
 st.set_page_config(page_title="maxBOT", page_icon="🏀", layout="wide")
 
-# Initialize session state for login
-if 'user' not in st.session_state:
-    st.session_state.user = None
+USER_ID = "maxbot_user"
 
+st.sidebar.title("maxBOT")
+st.sidebar.write("Personal Tracker")
+st.sidebar.markdown("---")
 
-# Authentication Functions
-def login(email, password):
-    try:
-        response = supabase.auth.sign_in_with_password({
-            "email": email,
-            "password": password
-        })
-        st.session_state.user = response.user
-        return True, "Login successful!"
-    except Exception as e:
-        return False, str(e)
+page = st.sidebar.radio("Navigate", [
+    "Dashboard", "Daily Check-in", "Basketball Stats", "Reflections",
+    "Motivational Quotes", "To-Do List", "Goals", "Habit Streaks",
+    "Progress Photos"
+])
 
+st.sidebar.markdown("---")
+st.sidebar.info(f"{datetime.now().strftime('%B %d, %Y')}")
 
-def signup(email, password):
-    try:
-        response = supabase.auth.sign_up({
-            "email": email,
-            "password": password
-        })
-        return True, "Account created! Please log in."
-    except Exception as e:
-        return False, str(e)
+if page == "Dashboard":
+    st.title("Welcome to maxBOT")
+    st.write("Your personal basketball growth and discipline tracker.")
+    st.success("App is ready! Start tracking your journey.")
 
+    conn = get_connection()
+    cursor = conn.cursor()
 
-def logout():
-    try:
-        supabase.auth.sign_out()
-        st.session_state.user = None
-        st.success("Logged out successfully!")
-    except Exception as e:
-        st.error(f"Logout error: {e}")
+    cursor.execute('SELECT COUNT(*) FROM daily_checkins WHERE user_id = ?',
+                   (USER_ID, ))
+    total_checkins = cursor.fetchone()[0]
 
+    cursor.execute(
+        'SELECT date FROM daily_checkins WHERE user_id = ? ORDER BY date DESC',
+        (USER_ID, ))
+    dates = [row[0] for row in cursor.fetchall()]
 
-# Check if user is logged in
-if st.session_state.user is None:
-    # Login/Signup Page
-    st.title("🏀 maxBOT")
-    st.subheader("Your Basketball Growth & Discipline Tracker")
-
-    tab1, tab2 = st.tabs(["Login", "Sign Up"])
-
-    with tab1:
-        st.subheader("Login to Your Account")
-        email = st.text_input("Email", key="login_email")
-        password = st.text_input("Password",
-                                 type="password",
-                                 key="login_password")
-
-        if st.button("Login"):
-            if email and password:
-                success, message = login(email, password)
-                if success:
-                    st.success(message)
-                    st.rerun()
-                else:
-                    st.error(f"Login failed: {message}")
+    streak = 0
+    if dates:
+        current_date = date.today()
+        for i, check_date in enumerate(dates):
+            check_date_obj = date.fromisoformat(check_date)
+            expected_date = current_date - timedelta(days=i)
+            if check_date_obj == expected_date:
+                streak += 1
             else:
-                st.warning("Please enter email and password")
+                break
 
-    with tab2:
-        st.subheader("Create New Account")
-        new_email = st.text_input("Email", key="signup_email")
-        new_password = st.text_input("Password (min 6 characters)",
-                                     type="password",
-                                     key="signup_password")
-        confirm_password = st.text_input("Confirm Password",
-                                         type="password",
-                                         key="confirm_password")
+    conn.close()
 
-        if st.button("Sign Up"):
-            if new_email and new_password and confirm_password:
-                if new_password == confirm_password:
-                    if len(new_password) >= 6:
-                        success, message = signup(new_email, new_password)
-                        if success:
-                            st.success(message)
-                        else:
-                            st.error(f"Signup failed: {message}")
-                    else:
-                        st.warning("Password must be at least 6 characters")
-                else:
-                    st.warning("Passwords don't match")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Total Check-ins", total_checkins)
+    with col2:
+        st.metric("Current Streak", f"{streak} days")
+
+elif page == "Daily Check-in":
+    st.title("Daily Check-in")
+
+    today = str(date.today())
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        'SELECT * FROM daily_checkins WHERE user_id = ? AND date = ?',
+        (USER_ID, today))
+    existing_checkin = cursor.fetchone()
+
+    if existing_checkin:
+        st.success("Already checked in today!")
+        st.write("---")
+        st.subheader("Today's Check-in:")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Practice",
+                      "Yes" if existing_checkin['attended_practice'] else "No")
+            st.metric("Avoided Smoking",
+                      "Yes" if existing_checkin['avoided_smoking'] else "No")
+        with col2:
+            st.metric(
+                "Avoided Masturbation",
+                "Yes" if existing_checkin['avoided_masturbation'] else "No")
+            st.metric("Mood", f"{existing_checkin['mood_rating']}/10")
+
+        st.metric("Energy Level", f"{existing_checkin['energy_level']}/10")
+
+        if st.button("Edit Check-in"):
+            st.session_state.edit_checkin = True
+            st.rerun()
+
+    if not existing_checkin or st.session_state.get('edit_checkin', False):
+        st.subheader("Log Your Day")
+
+        attended_practice = st.checkbox(
+            "I practiced basketball today",
+            value=bool(existing_checkin['attended_practice'])
+            if existing_checkin else False)
+        avoided_masturbation = st.checkbox(
+            "I stayed clean",
+            value=bool(existing_checkin['avoided_masturbation'])
+            if existing_checkin else False)
+        avoided_smoking = st.checkbox(
+            "I did not smoke today",
+            value=bool(existing_checkin['avoided_smoking'])
+            if existing_checkin else False)
+        mood_rating = st.slider(
+            "Mood",
+            1,
+            10,
+            value=existing_checkin['mood_rating'] if existing_checkin else 5)
+        energy_level = st.slider(
+            "Energy",
+            1,
+            10,
+            value=existing_checkin['energy_level'] if existing_checkin else 5)
+
+        if st.button("Save Check-in", type="primary"):
+            if existing_checkin:
+                cursor.execute(
+                    'UPDATE daily_checkins SET attended_practice=?, avoided_masturbation=?, avoided_smoking=?, mood_rating=?, energy_level=? WHERE id=?',
+                    (attended_practice, avoided_masturbation, avoided_smoking,
+                     mood_rating, energy_level, existing_checkin['id']))
+                st.success("Updated!")
             else:
-                st.warning("Please fill all fields")
+                cursor.execute(
+                    'INSERT INTO daily_checkins (user_id, date, attended_practice, avoided_masturbation, avoided_smoking, mood_rating, energy_level) VALUES (?,?,?,?,?,?,?)',
+                    (USER_ID, today, attended_practice, avoided_masturbation,
+                     avoided_smoking, mood_rating, energy_level))
+                st.success("Saved!")
+            conn.commit()
+            st.session_state.edit_checkin = False
+            st.rerun()
+
+    conn.close()
+
+elif page == "Basketball Stats":
+    from page_basketball_stats import show_basketball_stats
+    show_basketball_stats(USER_ID)
+
+elif page == "Motivational Quotes":
+    st.title("Motivational Quotes")
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM quotes')
+    quotes = cursor.fetchall()
+    conn.close()
+
+    if quotes:
+        quote = random.choice(quotes)
+        st.markdown(f"### {quote['quote_text']}")
+        if quote['author']:
+            st.markdown(f"**{quote['author']}**")
+        if st.button("Another Quote"):
+            st.rerun()
 
 else:
-    # User is logged in - Show the app
-
-    # Sidebar Navigation
-    st.sidebar.title("🏀 maxBOT")
-    st.sidebar.write(f"👤 {st.session_state.user.email}")
-    st.sidebar.markdown("---")
-
-    page = st.sidebar.radio("Navigate", [
-        "🏠 Dashboard", "✅ Daily Check-in", "📊 Basketball Stats",
-        "📝 Reflections", "💪 Motivational Quotes", "📋 To-Do List", "🎯 Goals",
-        "🔥 Habit Streaks", "📸 Progress Photos"
-    ])
-
-    st.sidebar.markdown("---")
-    if st.sidebar.button("🚪 Logout"):
-        logout()
-        st.rerun()
-
-    st.sidebar.info(f"📅 {datetime.now().strftime('%B %d, %Y')}")
-
-    # Main Content Area
-    if page == "🏠 Dashboard":
-        st.title("🏠 Dashboard")
-        st.write("Welcome back! Your data is saved to your account.")
-
-    elif page == "✅ Daily Check-in":
-        st.title("✅ Daily Check-in")
-        st.write("Log your daily activities here")
-
-    elif page == "📊 Basketball Stats":
-        st.title("📊 Basketball Stats")
-        st.write("Track your basketball performance")
-
-    elif page == "📝 Reflections":
-        st.title("📝 Reflections")
-        st.write("Journal and reflect on your progress")
-
-    elif page == "💪 Motivational Quotes":
-        st.title("💪 Motivational Quotes")
-        st.write("Get motivated with hard-hitting quotes")
-
-    elif page == "📋 To-Do List":
-        st.title("📋 To-Do List")
-        st.write("Manage your tasks")
-
-    elif page == "🎯 Goals":
-        st.title("🎯 Goals")
-        st.write("Set and track your goals")
-
-    elif page == "🔥 Habit Streaks":
-        st.title("🔥 Habit Streaks")
-        st.write("Track your habit streaks")
-
-    elif page == "📸 Progress Photos":
-        st.title("📸 Progress Photos")
-        st.write("Upload and compare progress photos")
+    st.title(page)
+    st.write("Coming soon!")
